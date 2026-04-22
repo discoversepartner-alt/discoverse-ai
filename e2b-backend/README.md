@@ -1,85 +1,83 @@
 # Discoverse E2B Backend
 
-A small Node.js service that bridges your Lovable app to **E2B sandboxes** (live desktop, code execution, browser control).
+Node service that bridges the Lovable app to **E2B sandboxes** — both code execution (Atlas) and the live desktop with Firefox (Kite).
 
-This is **NOT part of the Lovable app**. It runs separately on Railway (or any Node host) and your Lovable app calls it over HTTPS.
+This runs **separately from Lovable** on Render (or any Node host) and the Lovable app calls it over HTTPS.
+
+```
+[Lovable app]
+   │  HTTPS
+   ▼
+[This backend on Render]
+   │  E2B SDK
+   ▼
+[E2B code sandbox]   [E2B desktop sandbox + noVNC]
+                              │
+                         <iframe stream URL>
+                              │
+                         back to user's browser
+```
 
 ---
 
 ## Why this exists
 
-E2B's live desktop streaming uses **WebSockets** that need a long-lived server. Lovable's serverless Workers can't host that, so this tiny backend does it for us.
+E2B's desktop sandbox runs Firefox + a noVNC server inside an isolated VM. The Lovable Worker can't host the Express + WebSocket session needed to keep that alive between requests — so this small Node service does it.
 
-```
-[Lovable app] ──HTTPS──> [This backend on Railway] ──WebSocket──> [E2B Sandbox]
-```
+## Endpoints
 
----
+All endpoints (except `/health`) require `Authorization: Bearer <BACKEND_TOKEN>`.
 
-## Deploy to Railway in 5 minutes
+### Code execution (Atlas)
+- `POST /run-code` `{ code, language }` → `{ stdout, stderr, results, error }`
 
-### 1. Push this folder to GitHub
+### Live desktop (Kite)
+- `POST /desktop/start` → `{ sandboxId, streamUrl }`
+- `POST /desktop/stop` `{ sandboxId }` → `{ ok }`
+- `POST /desktop/screenshot` `{ sandboxId }` → `{ image: base64, mime }`
+- `POST /desktop/action` `{ sandboxId, action }` → `{ ok }`
 
-The easiest way:
-
-1. Connect your Lovable project to GitHub (top-right → GitHub → Connect)
-2. The whole project (including this `e2b-backend/` folder) lands in your repo
-3. We'll point Railway at this subfolder
-
-### 2. Sign up at Railway
-
-Go to [railway.com](https://railway.com) → Sign in with GitHub → **New Project** → **Deploy from GitHub repo** → pick your Discoverse repo.
-
-### 3. Configure the service
-
-In the Railway service settings:
-
-- **Root Directory**: `e2b-backend`
-- **Build Command**: `npm install`
-- **Start Command**: `npm start`
-
-### 4. Add environment variables
-
-In Railway → Variables, add:
-
-| Name | Value | Where to get it |
-|------|-------|------------------|
-| `E2B_API_KEY` | `e2b_...` | [e2b.dev/dashboard](https://e2b.dev/dashboard) → API Keys |
-| `BACKEND_TOKEN` | any long random string | Generate one yourself, e.g. `openssl rand -hex 32` |
-| `ALLOWED_ORIGIN` | your Lovable URL | e.g. `https://discoverse.lovable.app` (or `*` while testing) |
-
-### 5. Generate a public URL
-
-In Railway → Settings → Networking → **Generate Domain**.
-
-You'll get something like `discoverse-e2b-production.up.railway.app`.
-
-### 6. Test it
-
-Open in your browser:
-
-```
-https://your-railway-url.up.railway.app/health
+Action shapes:
+```jsonc
+{ "type": "navigate",     "url": "https://chatgpt.com" }
+{ "type": "left_click",   "x": 100, "y": 200 }
+{ "type": "double_click", "x": 100, "y": 200 }
+{ "type": "right_click",  "x": 100, "y": 200 }
+{ "type": "move",         "x": 100, "y": 200 }
+{ "type": "scroll",       "direction": "down", "amount": 3 }
+{ "type": "type",         "text": "hello" }
+{ "type": "key",          "key": "Return" }
+{ "type": "wait",         "ms": 1000 }
 ```
 
-You should see `{"ok":true}`.
+### Health
+- `GET /health` → `{ ok: true }`
 
-### 7. Tell Lovable
+## Session lifecycle
 
-Come back to Lovable chat and paste:
+- Desktops idle for **15 minutes** are auto-killed.
+- Hard cap: **60 minutes** per session.
+- Sessions are stored in memory → **only run 1 Render replica**. If you need to scale, move `desktops` into Redis.
 
-> Railway URL: `https://your-railway-url.up.railway.app`
-> Backend token: `the-token-you-generated`
+## Deploy to Render
 
-I'll then wire it into the orchestrator and add the live desktop panel.
+1. Push the repo to GitHub.
+2. New Web Service → connect repo → set:
+   - **Root Directory**: `e2b-backend`
+   - **Build Command**: `npm install`
+   - **Start Command**: `npm start`
+3. Environment variables:
 
----
+   | Name | Value |
+   |------|-------|
+   | `E2B_API_KEY` | from [e2b.dev/dashboard](https://e2b.dev/dashboard) |
+   | `BACKEND_TOKEN` | random string (`openssl rand -hex 32`) |
+   | `ALLOWED_ORIGIN` | `*` (or your Lovable URL) |
 
-## Endpoints (for reference)
+4. Generate a public domain.
+5. Test: `curl https://<your-domain>/health` → `{"ok":true,...,"version":"0.2.0"}`
 
-- `GET /health` — health check
-- `POST /run-code` — run code in a sandbox, returns stdout/files
-- `POST /desktop/start` — start a desktop sandbox, returns a stream URL
-- `WS /desktop/:id` — WebSocket stream of the live desktop
+## Cost notes
 
-All endpoints require `Authorization: Bearer <BACKEND_TOKEN>`.
+- Code sandboxes: ~free tier friendly, kill after each call.
+- **Desktop sandboxes are paid** — make sure your E2B plan supports them. Each idle desktop costs you while it lives, so the 15-minute reaper matters.
