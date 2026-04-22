@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ManifestoRouteImport } from './routes/manifesto'
+import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as IndexRouteImport } from './routes/index'
@@ -17,6 +18,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const ManifestoRoute = ManifestoRouteImport.update({
   id: '/manifesto',
   path: '/manifesto',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthRoute = AuthRouteImport.update({
+  id: '/auth',
+  path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppRoute = AppRouteImport.update({
@@ -39,12 +45,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/app': typeof AppRoute
+  '/auth': typeof AuthRoute
   '/manifesto': typeof ManifestoRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/app': typeof AppRoute
+  '/auth': typeof AuthRoute
   '/manifesto': typeof ManifestoRoute
 }
 export interface FileRoutesById {
@@ -52,20 +60,22 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/agents': typeof AgentsRoute
   '/app': typeof AppRoute
+  '/auth': typeof AuthRoute
   '/manifesto': typeof ManifestoRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/agents' | '/app' | '/manifesto'
+  fullPaths: '/' | '/agents' | '/app' | '/auth' | '/manifesto'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/agents' | '/app' | '/manifesto'
-  id: '__root__' | '/' | '/agents' | '/app' | '/manifesto'
+  to: '/' | '/agents' | '/app' | '/auth' | '/manifesto'
+  id: '__root__' | '/' | '/agents' | '/app' | '/auth' | '/manifesto'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AgentsRoute: typeof AgentsRoute
   AppRoute: typeof AppRoute
+  AuthRoute: typeof AuthRoute
   ManifestoRoute: typeof ManifestoRoute
 }
 
@@ -76,6 +86,13 @@ declare module '@tanstack/react-router' {
       path: '/manifesto'
       fullPath: '/manifesto'
       preLoaderRoute: typeof ManifestoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth': {
+      id: '/auth'
+      path: '/auth'
+      fullPath: '/auth'
+      preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app': {
@@ -106,6 +123,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AgentsRoute: AgentsRoute,
   AppRoute: AppRoute,
+  AuthRoute: AuthRoute,
   ManifestoRoute: ManifestoRoute,
 }
 export const routeTree = rootRouteImport
