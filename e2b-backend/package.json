@@ -1,6 +1,6 @@
 {
   "name": "discoverse-e2b-backend",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,9 +8,9 @@
   },
   "dependencies": {
     "@e2b/code-interpreter": "^1.0.4",
+    "@e2b/desktop": "^1.5.0",
     "cors": "^2.8.5",
-    "express": "^4.21.1",
-    "ws": "^8.18.0"
+    "express": "^4.21.1"
   },
   "engines": {
     "node": ">=20"
