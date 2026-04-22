@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { runOrchestrator, type AgentStep } from "@/server/orchestrator.functions";
+import { runOrchestrator, type AgentStep, type CodeExecution } from "@/server/orchestrator.functions";
 import { AgentTimeline } from "@/components/agent-timeline";
 import { AGENTS, AGENT_BY_ID, type AgentId } from "@/lib/agents";
 
@@ -22,6 +22,7 @@ interface ChatMessage {
   plan?: AgentStep[];
   primaryAgent?: AgentId;
   pending?: boolean;
+  executions?: CodeExecution[];
 }
 
 const SUGGESTIONS = [
@@ -93,6 +94,7 @@ function WorkspacePage() {
                 content: result.reply,
                 plan: result.plan,
                 primaryAgent: result.primaryAgent,
+                executions: result.executions,
               }
             : m,
         ),
@@ -289,6 +291,14 @@ function AssistantBubble({ message }: { message: ChatMessage }) {
           </div>
         )}
 
+        {message.executions && message.executions.length > 0 && (
+          <div className="space-y-2">
+            {message.executions.map((exec, i) => (
+              <CodeExecutionCard key={i} execution={exec} />
+            ))}
+          </div>
+        )}
+
         {!message.pending && message.content && (
           <div className="rounded-3xl rounded-tl-md border border-border/60 bg-surface-elevated/80 px-4 py-3 backdrop-blur">
             <p className="text-[11px] uppercase tracking-wider text-primary/80">{primary.name}</p>
@@ -298,6 +308,37 @@ function AssistantBubble({ message }: { message: ChatMessage }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function CodeExecutionCard({ execution }: { execution: CodeExecution }) {
+  const output = execution.error ?? execution.stderr ?? execution.stdout;
+  const hasOutput = Boolean(execution.stdout || execution.stderr || execution.error);
+  return (
+    <div className="overflow-hidden rounded-2xl border border-border/60 bg-surface/40 backdrop-blur">
+      <div className="flex items-center justify-between border-b border-border/40 px-3 py-2">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
+          <span className="h-1 w-1 rounded-full bg-primary" />
+          Atlas · sandbox · {execution.language}
+        </div>
+        {execution.error && (
+          <span className="rounded-full bg-destructive/20 px-2 py-0.5 text-[10px] text-destructive-foreground">
+            error
+          </span>
+        )}
+      </div>
+      <pre className="max-h-48 overflow-auto scrollbar-thin px-3 py-2 text-[12px] leading-relaxed text-foreground/90">
+        <code>{execution.code}</code>
+      </pre>
+      {hasOutput && (
+        <div className="border-t border-border/40 bg-background/40 px-3 py-2">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Output</p>
+          <pre className="mt-1 max-h-40 overflow-auto scrollbar-thin text-[12px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
+            {(output || "").slice(0, 2000) || "(no output)"}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }
