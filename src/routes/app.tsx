@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { runOrchestrator, type AgentStep, type CodeExecution } from "@/server/orchestrator.functions";
 import { AgentTimeline } from "@/components/agent-timeline";
+import { LiveDesktop } from "@/components/live-desktop";
 import { AGENTS, AGENT_BY_ID, type AgentId } from "@/lib/agents";
 
 export const Route = createFileRoute("/app")({
@@ -28,12 +29,19 @@ interface ChatMessage {
 const SUGGESTIONS = [
   { agent: "researcher" as AgentId, label: "Research the EV market in India for 2026" },
   { agent: "writer" as AgentId, label: "Write a launch post for my startup" },
-  { agent: "designer" as AgentId, label: "Make a 5-slide pitch deck outline" },
+  { agent: "browser" as AgentId, label: "Open Hacker News and summarise the top 5 stories" },
   { agent: "coder" as AgentId, label: "Build a Python script to summarise a CSV" },
 ];
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
+}
+
+// Heuristic: did the user ask for something that needs the browser?
+function looksLikeBrowserTask(text: string): boolean {
+  const t = text.toLowerCase();
+  return /\b(open|browse|navigate|visit|go to|search on|google|chatgpt|website|web ?page|fill (out|in)|book|order|sign in|log in|login|scroll)\b/.test(t)
+    || /https?:\/\//.test(t);
 }
 
 function WorkspacePage() {
@@ -42,6 +50,8 @@ function WorkspacePage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [desktopOpen, setDesktopOpen] = useState(false);
+  const [desktopGoal, setDesktopGoal] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -61,6 +71,29 @@ function WorkspacePage() {
     if (!trimmed || sending) return;
 
     setError(null);
+
+    // Browser intent → open the desktop panel with this goal. Skip orchestrator
+    // entirely for browser tasks (Kite has its own loop).
+    if (looksLikeBrowserTask(trimmed)) {
+      const userMsg: ChatMessage = { id: uid(), role: "user", content: trimmed };
+      const noteMsg: ChatMessage = {
+        id: uid(),
+        role: "assistant",
+        content: "Handing this to Kite. Watch the live desktop on the right — I'll spin up a fresh browser and work through the goal step by step.",
+        primaryAgent: "browser",
+        plan: [
+          { agent: "orchestrator", title: "Routing", detail: "Detected a browser task", status: "done" },
+          { agent: "browser", title: "Kite launching", detail: "Opening live desktop…", status: "running" },
+        ],
+      };
+      setMessages((prev) => [...prev, userMsg, noteMsg]);
+      setInput("");
+      setDesktopGoal(trimmed);
+      setDesktopOpen(true);
+      requestAnimationFrame(autosize);
+      return;
+    }
+
     const userMsg: ChatMessage = { id: uid(), role: "user", content: trimmed };
     const placeholder: ChatMessage = {
       id: uid(),
@@ -108,11 +141,26 @@ function WorkspacePage() {
     }
   }
 
+  function handleKiteComplete(summary: string) {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: uid(),
+        role: "assistant",
+        content: summary,
+        primaryAgent: "browser",
+        plan: [
+          { agent: "browser", title: "Kite finished", detail: "Live desktop run complete", status: "done" },
+        ],
+      },
+    ]);
+  }
+
   return (
     <div className="flex h-[100dvh] flex-col bg-background noise">
       {/* Top bar */}
       <header className="glass shrink-0">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
           <Link to="/" className="flex items-center gap-2.5">
             <span className="relative flex h-6 w-6 items-center justify-center">
               <span className="absolute inset-0 rounded-full bg-primary/30 blur-md animate-pulse-glow" />
@@ -120,7 +168,27 @@ function WorkspacePage() {
             </span>
             <span className="font-display text-base">Discoverse</span>
           </Link>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (desktopOpen) {
+                  setDesktopOpen(false);
+                  setDesktopGoal(null);
+                } else {
+                  setDesktopGoal(null);
+                  setDesktopOpen(true);
+                }
+              }}
+              className={`hidden sm:inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                desktopOpen
+                  ? "border-primary/50 bg-primary/15 text-foreground"
+                  : "border-border/60 text-muted-foreground hover:bg-surface hover:text-foreground"
+              }`}
+            >
+              <span aria-hidden>◈</span>
+              {desktopOpen ? "Hide desktop" : "Live desktop"}
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -141,77 +209,110 @@ function WorkspacePage() {
         </div>
       </header>
 
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-thin">
-        <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-5 px-4 py-6 sm:px-6">
-          {messages.length === 0 ? (
-            <Welcome onPick={(s) => send(s)} />
-          ) : (
-            messages.map((m) =>
-              m.role === "user" ? (
-                <UserBubble key={m.id} content={m.content} />
+      {/* Workspace body — chat + (optional) live desktop side panel */}
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Messages */}
+          <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-thin">
+            <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-5 px-4 py-6 sm:px-6">
+              {messages.length === 0 ? (
+                <Welcome onPick={(s) => send(s)} />
               ) : (
-                <AssistantBubble key={m.id} message={m} />
-              ),
-            )
-          )}
+                messages.map((m) =>
+                  m.role === "user" ? (
+                    <UserBubble key={m.id} content={m.content} />
+                  ) : (
+                    <AssistantBubble key={m.id} message={m} />
+                  ),
+                )
+              )}
 
-          {error && (
-            <div className="rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive-foreground">
-              {error}
+              {error && (
+                <div className="rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive-foreground">
+                  {error}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </div>
+          </div>
 
-      {/* Composer */}
-      <div className="shrink-0 border-t border-border/50 bg-background/80 backdrop-blur">
-        <div className="mx-auto max-w-3xl px-3 py-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] sm:px-6 sm:py-4">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              send(input);
-            }}
-            className="flex items-end gap-2 rounded-3xl border border-border/60 bg-surface/80 p-2 pl-4 backdrop-blur transition-all focus-within:border-primary/50 focus-within:glow-amber"
-          >
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                autosize();
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+          {/* Composer */}
+          <div className="shrink-0 border-t border-border/50 bg-background/80 backdrop-blur">
+            <div className="mx-auto max-w-3xl px-3 py-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] sm:px-6 sm:py-4">
+              <form
+                onSubmit={(e) => {
                   e.preventDefault();
                   send(input);
-                }
-              }}
-              rows={1}
-              placeholder="Give the team a goal…"
-              disabled={sending}
-              className="flex-1 resize-none bg-transparent py-2.5 text-[15px] leading-snug text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-60"
-            />
-            <button
-              type="submit"
-              disabled={sending || !input.trim()}
-              aria-label="Send"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed glow-amber"
-            >
-              {sending ? (
-                <span className="h-2 w-2 animate-pulse rounded-full bg-primary-foreground" />
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 19V5M5 12l7-7 7 7" />
-                </svg>
-              )}
-            </button>
-          </form>
-          <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            Discoverse can make mistakes. Verify before shipping.
-          </p>
+                }}
+                className="flex items-end gap-2 rounded-3xl border border-border/60 bg-surface/80 p-2 pl-4 backdrop-blur transition-all focus-within:border-primary/50 focus-within:glow-amber"
+              >
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    autosize();
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      send(input);
+                    }
+                  }}
+                  rows={1}
+                  placeholder="Give the team a goal…"
+                  disabled={sending}
+                  className="flex-1 resize-none bg-transparent py-2.5 text-[15px] leading-snug text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-60"
+                />
+                <button
+                  type="submit"
+                  disabled={sending || !input.trim()}
+                  aria-label="Send"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed glow-amber"
+                >
+                  {sending ? (
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-primary-foreground" />
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 19V5M5 12l7-7 7 7" />
+                    </svg>
+                  )}
+                </button>
+              </form>
+              <p className="mt-2 text-center text-[11px] text-muted-foreground">
+                Discoverse can make mistakes. Verify before shipping.
+              </p>
+            </div>
+          </div>
         </div>
+
+        {/* Live desktop panel */}
+        {desktopOpen && (
+          <div className="hidden lg:flex">
+            <LiveDesktop
+              goal={desktopGoal}
+              onClose={() => {
+                setDesktopOpen(false);
+                setDesktopGoal(null);
+              }}
+              onComplete={handleKiteComplete}
+            />
+          </div>
+        )}
       </div>
+
+      {/* Mobile desktop overlay */}
+      {desktopOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background lg:hidden">
+          <LiveDesktop
+            goal={desktopGoal}
+            onClose={() => {
+              setDesktopOpen(false);
+              setDesktopGoal(null);
+            }}
+            onComplete={handleKiteComplete}
+          />
+        </div>
+      )}
     </div>
   );
 }
